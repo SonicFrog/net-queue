@@ -5,6 +5,7 @@ edition = "2021"
 description = "A framework to abstract network queues"
 homepage = "https://github.com/SonicFrog/net-queue"
 authors = [ "Ogier Bouvier <ogier@bouvier.family>" ]
+license = "MIT"
 
 [dependencies]
 async-trait = "0.1"
