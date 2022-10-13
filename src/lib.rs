@@ -14,7 +14,8 @@ mod local;
 #[cfg(feature = "local")]
 pub use local::*;
 
-/// An abstract job queue that also handles job persistence
+/// An abstract queue that handles reliable delivery through job acknowledgment and
+/// optionally persistence
 #[async_trait::async_trait]
 pub trait JobQueue: Send + Sync {
     /// The type of error that can occur when getting/putting a job
@@ -33,7 +34,7 @@ pub trait JobQueue: Send + Sync {
 }
 
 #[async_trait::async_trait]
-/// The trait handling making job queues
+/// The queue factory trait that takes care of creating queues
 pub trait MakeJobQueue: Send + Sync {
     /// The type of job queue returned by this factory
     type Queue: JobQueue;

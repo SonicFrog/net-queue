@@ -10,11 +10,8 @@ updates:
     directory: "/" # Location of package manifests
     schedule:
       interval: "daily"
-  - package-ecosystem: "cargo"
-    directory: "/manager-lib"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
     schedule:
-      interval: "daily"
-  - package-ecosystem: "cargo"
-    directory: "/manager-api"
-    schedule:
-      interval: "daily"
+      interval: "weekly"

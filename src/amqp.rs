@@ -5,10 +5,14 @@ use lapin::options::{
     BasicAckOptions, BasicConsumeOptions, BasicNackOptions, BasicPublishOptions,
     QueueDeclareOptions,
 };
-use lapin::types::FieldTable;
+use lapin::types::{DeliveryTag, FieldTable};
 use lapin::{BasicProperties, Channel, Connection, ConnectionProperties};
 
 use snafu::prelude::*;
+
+use tracing::*;
+
+use uuid::Uuid;
 
 use super::*;
 
@@ -39,6 +43,9 @@ impl AmqpJobQueue {
     /// Create a new `JobQueue` backed by the given RabbitMQ connection
     pub async fn new(queue_name: impl Into<String>, channel: Channel) -> Result<Self> {
         let queue_name = queue_name.into();
+        let consumer_tag = Uuid::new_v4();
+
+        trace!(queue_name = %queue_name, "declaring new queue");
 
         channel
             .queue_declare(
@@ -54,17 +61,24 @@ impl AmqpJobQueue {
                 name: queue_name.to_string(),
             })?;
 
+        trace!(queue_name = %queue_name, "creating consumer");
+
         let out_queue = channel
             .basic_consume(
                 &queue_name,
-                "spooler",
-                BasicConsumeOptions::default(),
+                consumer_tag.to_string().as_str(),
+                BasicConsumeOptions {
+                    no_ack: false,
+                    ..Default::default()
+                },
                 FieldTable::default(),
             )
             .await
             .context(QueueSnafu {
                 name: queue_name.to_string(),
             })?;
+
+        trace!(queue_name = % queue_name, "done initializing");
 
         Ok(Self {
             out_queue,
@@ -88,13 +102,15 @@ impl JobQueue for AmqpJobQueue {
     {
         let data = job.as_ref();
 
+        trace!(queue_name = % self.queue_name, "posting data");
+
         self.channel
             .basic_publish(
                 "",
                 &self.queue_name,
                 BasicPublishOptions::default(),
                 data,
-                BasicProperties::default(),
+                BasicProperties::default().with_delivery_mode(1),
             )
             .await
             .map(|_| ())
@@ -107,6 +123,8 @@ impl JobQueue for AmqpJobQueue {
     /// [`Future`]: self::Future
     /// [`JobData`]: self::JobData
     async fn get_job(&self) -> Result<JobResult<Self::Handle>> {
+        trace!("attempting get job on queue {}", self.queue_name);
+
         let delivery = self
             .out_queue
             .clone()
@@ -115,9 +133,11 @@ impl JobQueue for AmqpJobQueue {
             .context(NoJobSnafu)?
             .context(ConnectionSnafu)?;
 
+        trace!(tag = delivery.delivery_tag, "new job fetched from rabbitmq");
+
         Ok(JobResult::new(
             delivery.data,
-            Self::Handle::new(delivery.acker),
+            Self::Handle::new(delivery.acker, delivery.delivery_tag),
         ))
     }
 }
@@ -132,11 +152,15 @@ impl MakeJobQueue for MakeRabbitJobQueue {
     type Queue = AmqpJobQueue;
 
     async fn make_job_queue(&self, name: &str, url: Url) -> Result<Self::Queue, Self::Err> {
+        trace!(url = %url, "connecting to rabbitmq at {}", url);
+
         let connection = Connection::connect(url.as_str(), ConnectionProperties::default())
             .await
             .context(ConnectionSnafu)?;
 
         let channel = connection.create_channel().await.context(ConnectionSnafu)?;
+
+        trace!(url = %url, "connection and channel created");
 
         AmqpJobQueue::new(name, channel).await
     }
@@ -152,12 +176,13 @@ impl PartialEq for AmqpJobQueue {
 
 /// A rabbitmq acknowledgement manager
 pub struct AckManager {
+    tag: DeliveryTag,
     acker: Acker,
 }
 
 impl AckManager {
-    fn new(acker: Acker) -> Self {
-        Self { acker }
+    fn new(acker: Acker, tag: DeliveryTag) -> Self {
+        Self { acker, tag }
     }
 }
 
@@ -166,6 +191,8 @@ impl JobHandle for AckManager {
     type Err = RabbitError;
 
     async fn ack_job(&self) -> Result<()> {
+        trace!(tag = self.tag, "acking job");
+
         self.acker
             .ack(BasicAckOptions::default())
             .await
@@ -173,8 +200,13 @@ impl JobHandle for AckManager {
     }
 
     async fn nack_job(&self) -> Result<()> {
+        trace!(tag = self.tag, "n-acking job");
+
         self.acker
-            .nack(BasicNackOptions::default())
+            .nack(BasicNackOptions {
+                requeue: true,
+                ..Default::default()
+            })
             .await
             .context(ConnectionSnafu)
     }
@@ -184,14 +216,12 @@ impl JobHandle for AckManager {
 mod test {
     use super::*;
 
+    use std::time::Duration;
+
     use lapin::{Channel, Connection, ConnectionProperties};
 
     fn make_job_data() -> Vec<u8> {
-        let mut vec = Vec::new();
-
-        vec.resize(100, 1);
-
-        vec
+        String::from("test-message").into_bytes()
     }
 
     /// Get a rabbit mq connection to some server for integration tests
@@ -207,15 +237,19 @@ mod test {
             .expect("could not create rabbitmq channel")
     }
 
-    #[tokio::test]
-    async fn job_queue() {
-        use std::time::Duration;
-
+    /// Create a queue with a given name
+    pub async fn create_queue(name: &str) -> impl JobQueue {
         let channel = rabbit_mq_connection().await;
-        let queue = AmqpJobQueue::new("test_job_queue", channel)
+
+        AmqpJobQueue::new(name, channel)
             .await
-            .expect("could not create job queue");
+            .expect("could not create job queue")
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn job_queue() {
         let posted = make_job_data();
+        let queue = create_queue("test-job-queu").await;
 
         queue
             .put_job(posted.clone())
@@ -232,5 +266,29 @@ mod test {
         assert_eq!(&posted, &*gotten, "job differs");
 
         gotten.ack_job().await.expect("failed to ack job");
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn nack_request() {
+        static NAME: &str = "nack_job_queue";
+
+        let queue = create_queue(NAME).await;
+
+        let posted = make_job_data();
+
+        queue.put_job(&posted).await.expect("failed to put job");
+
+        let mut handle = queue.get_job().await.expect("failed to get job");
+
+        handle.nack_job().await.expect("failed to n-ack job");
+
+        let mut gotten = queue.get_job().await.expect("failed to get job");
+
+        assert_eq!(&posted, &*gotten, "different job after nack");
+
+        gotten
+            .ack_job()
+            .await
+            .expect("could not ack job after nack");
     }
 }

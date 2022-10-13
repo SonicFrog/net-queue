@@ -28,10 +28,7 @@ impl JobQueue for LocalJobQueue {
     where
         D: AsRef<[u8]> + Send,
     {
-        self.queue
-            .write()
-            .await
-            .push_back(data.as_ref().iter().copied().collect());
+        self.queue.write().await.push_back(data.as_ref().to_vec());
 
         debug!("registered new job");
 
