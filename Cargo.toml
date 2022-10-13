@@ -1,0 +1,25 @@
+[package]
+name = "net-queue"
+version = "0.1.0"
+edition = "2021"
+description = "A framework to abstract network queues"
+homepage = "https://github.com/SonicFrog/net-queue"
+authors = [ "Ogier Bouvier <ogier@bouvier.family>" ]
+
+[dependencies]
+async-trait = "0.1"
+tracing = "0.1"
+url = "2"
+
+# Rabbitmq deps
+lapin = { version = "2", optional = true }
+snafu = { version = "0.7", optional = true }
+tokio = { version = "1", features = [ "sync", "rt" ], optional = true }
+futures = { version = "0.3", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = [ "time", "macros" ] }
+
+[features]
+rabbitmq = [ "lapin", "snafu", "tokio", "futures" ]
+local = [ "tokio", "snafu" ]
