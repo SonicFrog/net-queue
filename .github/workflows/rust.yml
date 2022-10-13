@@ -101,6 +101,9 @@ jobs:
           version: '0.22.0'
           args: '--workspace --all-features'
 
+      - uses: codecov/codecov-action@v3
+        name: Upload report to codecov
+
   deny:
     name: Check dependencies
     runs-on: ubuntu-latest
