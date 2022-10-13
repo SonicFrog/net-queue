@@ -8,7 +8,6 @@ authors = [ "Ogier Bouvier <ogier@bouvier.family>" ]
 
 [dependencies]
 async-trait = "0.1"
-tracing = "0.1"
 url = "2"
 
 # Rabbitmq deps
@@ -16,10 +15,14 @@ lapin = { version = "2", optional = true }
 snafu = { version = "0.7", optional = true }
 tokio = { version = "1", features = [ "sync", "rt" ], optional = true }
 futures = { version = "0.3", optional = true }
+uuid = { version = "1", optional = true, features = [ "v4" ] }
+tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = [ "time", "macros" ] }
+test-log = { version = "0.2", default-features = false, features = [ "trace" ] }
+tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 
 [features]
-rabbitmq = [ "lapin", "snafu", "tokio", "futures" ]
+rabbitmq = [ "lapin", "snafu", "tokio", "futures", "uuid", "tracing" ]
 local = [ "tokio", "snafu" ]
