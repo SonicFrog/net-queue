@@ -10,14 +10,16 @@ license = "MIT"
 [dependencies]
 async-trait = "0.1"
 url = "2"
+futures = "0.3"
+pin-project-lite = "0.2"
 
-# Rabbitmq deps
+# Optional deps for specific queue implementations
 lapin = { version = "2", optional = true }
 snafu = { version = "0.7", optional = true }
 tokio = { version = "1", features = [ "sync", "rt" ], optional = true }
-futures = { version = "0.3", optional = true }
 uuid = { version = "1", optional = true, features = [ "v4" ] }
 tracing = { version = "0.1", optional = true }
+postage = { version = "0.5", default-features = false, features = [ "futures-traits" ], optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = [ "time", "macros" ] }
@@ -25,5 +27,5 @@ test-log = { version = "0.2", default-features = false, features = [ "trace" ] }
 tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 
 [features]
-rabbitmq = [ "lapin", "snafu", "tokio", "futures", "uuid", "tracing" ]
-local = [ "tokio", "snafu" ]
+rabbitmq = [ "lapin", "snafu", "tokio", "uuid", "tracing" ]
+local = [ "snafu", "postage", "tokio", "tracing" ]

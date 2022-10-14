@@ -1,3 +1,6 @@
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
 use futures::prelude::*;
 
 use lapin::acker::Acker;
@@ -23,9 +26,9 @@ type Result<T, E = RabbitError> = std::result::Result<T, E>;
 pub enum RabbitError {
     #[snafu(display("rabbitmq connection error: {}", source))]
     Connection { source: lapin::Error },
-    #[snafu(display("channel creation error: {}", source))]
+    #[snafu(display("failed to get job from queue: {}", source))]
     Channel { source: lapin::Error },
-    #[snafu(display("could not create channel {}: {}", name, source))]
+    #[snafu(display("failed to create queue  {}: {}", name, source))]
     Queue { name: String, source: lapin::Error },
     #[snafu(display("no job available"))]
     NoJob,
@@ -94,6 +97,8 @@ impl JobQueue for AmqpJobQueue {
 
     type Handle = AckManager;
 
+    type Consumer = AmqpConsumer;
+
     /// Put a job in the job queue that will be forwarded to a client once there
     /// is a get job request
     async fn put_job<D>(&self, job: D) -> Result<(), Self::Err>
@@ -139,6 +144,10 @@ impl JobQueue for AmqpJobQueue {
             delivery.data,
             Self::Handle::new(delivery.acker, delivery.delivery_tag),
         ))
+    }
+
+    async fn consumer(&self) -> Self::Consumer {
+        self.out_queue.clone().into()
     }
 }
 
@@ -212,6 +221,45 @@ impl JobHandle for AckManager {
     }
 }
 
+pin_project_lite::pin_project! {
+    /// A [`Consumer`] for an [`AmqpJobQueue`]
+    ///
+    /// [`Consumer`]: crate::Consumer
+    /// [`AmqpJobQueue`]: self::AmqpJobQueue
+    pub struct AmqpConsumer {
+        #[pin]
+        consumer: lapin::Consumer,
+    }
+}
+
+impl Consumer for AmqpConsumer {
+    type Err = RabbitError;
+
+    type Handle = AckManager;
+}
+
+impl From<lapin::Consumer> for AmqpConsumer {
+    fn from(consumer: lapin::Consumer) -> Self {
+        Self { consumer }
+    }
+}
+
+impl Stream for AmqpConsumer {
+    type Item = Result<JobResult<<Self as Consumer>::Handle>, <Self as Consumer>::Err>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.project()
+            .consumer
+            .poll_next(cx)
+            .map_ok(|value| {
+                let handle = AckManager::new(value.acker, value.delivery_tag);
+
+                JobResult::new(value.data, handle)
+            })
+            .map_err(|e| RabbitError::Channel { source: e })
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -226,7 +274,7 @@ mod test {
 
     /// Get a rabbit mq connection to some server for integration tests
     pub async fn rabbit_mq_connection() -> Channel {
-        let addr = env!("AMQP_ADDR");
+        let addr = option_env!("AMQP_ADDR").unwrap_or("amqp://localhost:5672");
 
         let conn = Connection::connect(addr, ConnectionProperties::default())
             .await
@@ -290,5 +338,30 @@ mod test {
             .ack_job()
             .await
             .expect("could not ack job after nack");
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn consumer() {
+        static NAME: &str = "consumer_queue";
+
+        let queue = create_queue(NAME).await;
+
+        let posted = make_job_data();
+
+        queue.put_job(&posted).await.expect("failed to put job");
+
+        let consumer = queue.consumer().await;
+
+        futures::pin_mut!(consumer);
+
+        let mut gotten = consumer
+            .next()
+            .await
+            .expect("no job to get")
+            .expect("unable to get job");
+
+        assert_eq!(&posted, &*gotten, "message differs");
+
+        gotten.ack_job().await.expect("failed to ack job");
     }
 }

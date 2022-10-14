@@ -2,6 +2,8 @@ use std::error::Error;
 use std::future::Future;
 use std::ops::Deref;
 
+use futures::Stream;
+
 use url::Url;
 
 #[cfg(feature = "rabbitmq")]
@@ -24,6 +26,9 @@ pub trait JobQueue: Send + Sync {
     /// The type of handle returned by this JobQueue
     type Handle: JobHandle;
 
+    /// The type of `Consumer` `Stream` this `JobQueue` produces
+    type Consumer: Consumer;
+
     /// Put a job in the queue
     async fn put_job<D>(&self, job: D) -> Result<(), Self::Err>
     where
@@ -31,6 +36,13 @@ pub trait JobQueue: Send + Sync {
 
     /// Get a job from this queue
     async fn get_job(&self) -> Result<JobResult<Self::Handle>, Self::Err>;
+
+    /// Get a [`Consumer`] for this [`JobQueue`] to allow [`Stream`] usage
+    ///
+    /// [`Consumer`]: self::Consumer
+    /// [`JobQueue`]: self::JobQueue
+    /// [`Stream`]: self::Stream
+    async fn consumer(&self) -> Self::Consumer;
 }
 
 #[async_trait::async_trait]
@@ -58,6 +70,17 @@ pub trait JobHandle: Send + Sync + 'static {
     /// N-ack the job referred by this [`JobHandle`], this must trigger a requeue if the
     /// amount of tries has not exceeded the maximum amount
     async fn nack_job(&self) -> Result<(), Self::Err>;
+}
+
+/// A [`Consumer`] for a [`JobQueue`]
+///
+/// [`Consumer`]: self::Consumer
+/// [`JobQueue`]: self::JobQueue
+pub trait Consumer: Stream<Item = Result<JobResult<Self::Handle>, Self::Err>> {
+    /// Type of error that can occur while fetching jobs
+    type Err: Error + Send;
+    /// Type of `JobHandle` used to acknowledge jobs in this `Consumer`
+    type Handle: JobHandle;
 }
 
 /// A struct that holds both the job data and a JobHandle used to acknowledge jobs completion
