@@ -1,27 +1,14 @@
 on:
-  pull_request:
   push:
     branches: ["main"]
+  pull_request:
 
 name: CI
 
 jobs:
-  commit-check:
-    name: Check commit log
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v1
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-
-      - name: Validate commit history
-        uses: aevea/commitsar@v0.19.0
-
   check:
     name: unit tests
     runs-on: ubuntu-latest
-    needs: [ commit-check, deny ]
     services:
       rabbitmq:
         image: rabbitmq:3.11-management
@@ -75,6 +62,7 @@ jobs:
   coverage:
     name: coverage
     runs-on: ubuntu-20.04
+    needs: [ check ]
     services:
       rabbitmq:
         image: rabbitmq:3.11-management
@@ -106,17 +94,3 @@ jobs:
 
       - uses: codecov/codecov-action@v3
         name: Upload report to codecov
-
-  deny:
-    name: Check dependencies
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v2
-        name: git checkout
-
-      - name: Dependency Review
-        uses: actions/dependency-review-action@v2.4.1
-        with:
-          fail-on-severity: moderate
-          fail-on-scopes: runtime
