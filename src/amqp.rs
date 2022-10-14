@@ -266,32 +266,18 @@ mod test {
 
     use std::time::Duration;
 
-    use lapin::{Channel, Connection, ConnectionProperties};
-
     fn make_job_data() -> Vec<u8> {
         String::from("test-message").into_bytes()
     }
 
-    /// Get a rabbit mq connection to some server for integration tests
-    pub async fn rabbit_mq_connection() -> Channel {
-        let addr = option_env!("AMQP_ADDR").unwrap_or("amqp://localhost:5672");
-
-        let conn = Connection::connect(addr, ConnectionProperties::default())
-            .await
-            .expect("failed to connect to rabbitmq");
-
-        conn.create_channel()
-            .await
-            .expect("could not create rabbitmq channel")
-    }
-
     /// Create a queue with a given name
     pub async fn create_queue(name: &str) -> impl JobQueue {
-        let channel = rabbit_mq_connection().await;
+        let addr = option_env!("AMQP_ADDR").unwrap_or("amqp://localhost:5672");
 
-        AmqpJobQueue::new(name, channel)
+        MakeRabbitJobQueue
+            .make_job_queue(name, addr.parse().unwrap())
             .await
-            .expect("could not create job queue")
+            .expect("failed to create rabbit queue")
     }
 
     #[test_log::test(tokio::test)]
