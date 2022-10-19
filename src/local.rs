@@ -91,6 +91,7 @@ impl JobHandle for () {
 }
 
 /// Local queue maker
+#[derive(Clone, Default)]
 pub struct MakeLocalQueue;
 
 #[async_trait::async_trait]

@@ -152,6 +152,7 @@ impl JobQueue for AmqpJobQueue {
 }
 
 /// A factory for rabbit mq job queues
+#[derive(Clone, Default)]
 pub struct MakeRabbitJobQueue;
 
 #[async_trait::async_trait]
@@ -274,7 +275,8 @@ mod test {
     pub async fn create_queue(name: &str) -> impl JobQueue {
         let addr = option_env!("AMQP_ADDR").unwrap_or("amqp://localhost:5672");
 
-        MakeRabbitJobQueue
+        MakeRabbitJobQueue::default()
+            .clone()
             .make_job_queue(name, addr.parse().unwrap())
             .await
             .expect("failed to create rabbit queue")
