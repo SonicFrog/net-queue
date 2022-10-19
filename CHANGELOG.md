@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.2](https://github.com/SonicFrog/net-queue/compare/v0.2.1...v0.2.2) (2022-10-19)
+
+
+### Bug Fixes
+
+* chain error types from types ([87ab87e](https://github.com/SonicFrog/net-queue/commit/87ab87e0b2addf5ac714f4d6fe12d49e42ad8ebe))
+* require that errors types are `Send` + `Sync` ([bbca3e8](https://github.com/SonicFrog/net-queue/commit/bbca3e86c89863cc313e8dccb3b243808d56f301))
+
 ## [0.2.1](https://github.com/SonicFrog/net-queue/compare/v0.2.0...v0.2.1) (2022-10-19)
 
 
