@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::fmt::Debug;
 use std::future::Future;
 use std::ops::Deref;
 
@@ -21,13 +22,13 @@ pub use local::*;
 #[async_trait::async_trait]
 pub trait JobQueue: Send + Sync {
     /// The type of error that can occur when getting/putting a job
-    type Err: Error + Send;
+    type Err: Debug;
 
     /// The type of handle returned by this JobQueue
-    type Handle: JobHandle;
+    type Handle: JobHandle<Err = Self::Err>;
 
     /// The type of `Consumer` `Stream` this `JobQueue` produces
-    type Consumer: Consumer;
+    type Consumer: Consumer<Err = Self::Err>;
 
     /// Put a job in the queue
     async fn put_job<D>(&self, job: D) -> Result<(), Self::Err>
@@ -49,10 +50,10 @@ pub trait JobQueue: Send + Sync {
 /// The queue factory trait that takes care of creating queues
 pub trait MakeJobQueue: Send + Sync {
     /// The type of job queue returned by this factory
-    type Queue: JobQueue;
+    type Queue: JobQueue<Err = Self::Err>;
 
     /// The type of error that can occur when creating a job queue
-    type Err: Error + Send;
+    type Err: Error + Send + Sync;
 
     /// Create a new job queue using this factory
     async fn make_job_queue(&self, name: &str, url: Url) -> Result<Self::Queue, Self::Err>;
@@ -62,7 +63,7 @@ pub trait MakeJobQueue: Send + Sync {
 #[async_trait::async_trait]
 pub trait JobHandle: Send + Sync + 'static {
     /// Type of errors that can occur
-    type Err: Error + Send;
+    type Err: Debug;
 
     /// Ack the job referred by this `JobHandle`
     async fn ack_job(&self) -> Result<(), Self::Err>;
@@ -78,9 +79,9 @@ pub trait JobHandle: Send + Sync + 'static {
 /// [`JobQueue`]: self::JobQueue
 pub trait Consumer: Stream<Item = Result<JobResult<Self::Handle>, Self::Err>> {
     /// Type of error that can occur while fetching jobs
-    type Err: Error + Send;
+    type Err: Debug;
     /// Type of `JobHandle` used to acknowledge jobs in this `Consumer`
-    type Handle: JobHandle;
+    type Handle: JobHandle<Err = Self::Err>;
 }
 
 /// A struct that holds both the job data and a JobHandle used to acknowledge jobs completion
