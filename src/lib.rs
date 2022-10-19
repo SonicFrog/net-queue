@@ -21,7 +21,7 @@ pub use local::*;
 #[async_trait::async_trait]
 pub trait JobQueue: Send + Sync {
     /// The type of error that can occur when getting/putting a job
-    type Err: Error + Send;
+    type Err: Error + Send + Sync;
 
     /// The type of handle returned by this JobQueue
     type Handle: JobHandle;
@@ -52,7 +52,7 @@ pub trait MakeJobQueue: Send + Sync {
     type Queue: JobQueue;
 
     /// The type of error that can occur when creating a job queue
-    type Err: Error + Send;
+    type Err: Error + Send + Sync;
 
     /// Create a new job queue using this factory
     async fn make_job_queue(&self, name: &str, url: Url) -> Result<Self::Queue, Self::Err>;
@@ -62,7 +62,7 @@ pub trait MakeJobQueue: Send + Sync {
 #[async_trait::async_trait]
 pub trait JobHandle: Send + Sync + 'static {
     /// Type of errors that can occur
-    type Err: Error + Send;
+    type Err: Error + Send + Sync;
 
     /// Ack the job referred by this `JobHandle`
     async fn ack_job(&self) -> Result<(), Self::Err>;
@@ -78,7 +78,7 @@ pub trait JobHandle: Send + Sync + 'static {
 /// [`JobQueue`]: self::JobQueue
 pub trait Consumer: Stream<Item = Result<JobResult<Self::Handle>, Self::Err>> {
     /// Type of error that can occur while fetching jobs
-    type Err: Error + Send;
+    type Err: Error + Send + Sync;
     /// Type of `JobHandle` used to acknowledge jobs in this `Consumer`
     type Handle: JobHandle;
 }
