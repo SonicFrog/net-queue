@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/SonicFrog/net-queue/compare/v0.2.0...v0.2.1) (2022-10-19)
+
+
+### Bug Fixes
+
+* make queue creator `Clone` and `Default` ([4c8a9f7](https://github.com/SonicFrog/net-queue/commit/4c8a9f7cbd58b2c7cd4eb6448ce7ec7645c9551b))
+
 ## [0.2.0](https://github.com/SonicFrog/net-queue/compare/v0.1.0...v0.2.0) (2022-10-14)
 
 
