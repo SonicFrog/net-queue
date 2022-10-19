@@ -91,6 +91,7 @@ impl JobHandle for () {
 }
 
 /// Local queue maker
+#[derive(Clone, Default)]
 pub struct MakeLocalQueue;
 
 #[async_trait::async_trait]
@@ -102,7 +103,7 @@ impl MakeJobQueue for MakeLocalQueue {
     async fn make_job_queue(&self, _: &str, _: Url) -> Result<Self::Queue, Self::Err> {
         debug!("creating new local test queue");
 
-        Ok(Default::default())
+        Ok(Self::Queue::default())
     }
 }
 

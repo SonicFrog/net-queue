@@ -9,7 +9,8 @@ repos:
       - id: check-added-large-files
       - id: check-toml
       - id: detect-private-key
-      # - id: no-commit-to-branch
+      - id: no-commit-to-branch
+        args: [ "-b", "main" ]
 
   - repo: https://github.com/siderolabs/conform
     rev: v0.1.0-alpha.26
@@ -24,4 +25,4 @@ repos:
         args: [ '--check' ]
         pass_filenames: false
       - id: clippy
-        args: [ '--', '-A', 'clippy::derive_partial_eq_without_eq' ]
+        args: [ '--', '-D', 'warnings' ]
