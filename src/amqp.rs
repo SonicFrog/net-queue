@@ -6,7 +6,7 @@ use futures::prelude::*;
 use lapin::acker::Acker;
 use lapin::options::{
     BasicAckOptions, BasicConsumeOptions, BasicNackOptions, BasicPublishOptions,
-    QueueDeclareOptions,
+    QueueDeclareOptions, QueueDeleteOptions,
 };
 use lapin::types::{DeliveryTag, FieldTable};
 use lapin::{BasicProperties, Channel, Connection, ConnectionProperties};
@@ -128,7 +128,7 @@ impl JobQueue for AmqpJobQueue {
     /// [`Future`]: self::Future
     /// [`JobData`]: self::JobData
     async fn get_job(&self) -> Result<JobResult<Self::Handle>> {
-        trace!("attempting get job on queue {}", self.queue_name);
+        trace!(queue_name = % self.queue_name, "attempting get job");
 
         let delivery = self
             .out_queue
@@ -148,6 +148,22 @@ impl JobQueue for AmqpJobQueue {
 
     async fn consumer(&self) -> Self::Consumer {
         self.out_queue.clone().into()
+    }
+
+    async fn close(&self) -> Result<(), Self::Err> {
+        trace!(queue_name = % self.queue_name, "closing queue");
+
+        self.channel
+            .queue_delete(
+                &self.queue_name,
+                QueueDeleteOptions {
+                    if_empty: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .map(|_| ())
+            .context(ChannelSnafu)
     }
 }
 
@@ -263,6 +279,8 @@ impl Stream for AmqpConsumer {
 
 #[cfg(test)]
 mod test {
+    use test_log::test;
+
     use super::*;
 
     use std::time::Duration;
@@ -282,7 +300,7 @@ mod test {
             .expect("failed to create rabbit queue")
     }
 
-    #[test_log::test(tokio::test)]
+    #[test(tokio::test)]
     async fn job_queue() {
         let posted = make_job_data();
         let queue = create_queue("test-job-queu").await;
@@ -304,7 +322,7 @@ mod test {
         gotten.ack_job().await.expect("failed to ack job");
     }
 
-    #[test_log::test(tokio::test)]
+    #[test(tokio::test)]
     async fn nack_request() {
         static NAME: &str = "nack_job_queue";
 
@@ -328,7 +346,7 @@ mod test {
             .expect("could not ack job after nack");
     }
 
-    #[test_log::test(tokio::test)]
+    #[test(tokio::test)]
     async fn consumer() {
         static NAME: &str = "consumer_queue";
 
@@ -351,5 +369,21 @@ mod test {
         assert_eq!(&posted, &*gotten, "message differs");
 
         gotten.ack_job().await.expect("failed to ack job");
+    }
+
+    #[test(tokio::test)]
+    async fn close() {
+        static NAME: &str = "closed_queue";
+
+        let queue = create_queue(NAME).await;
+        let consumer = queue.consumer().await;
+
+        futures::pin_mut!(consumer);
+
+        queue.close().await.expect("failed to close queue");
+
+        let item = consumer.next().await;
+
+        assert!(item.is_none(), "received item from closed queue");
     }
 }

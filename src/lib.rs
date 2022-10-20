@@ -44,6 +44,13 @@ pub trait JobQueue: Send + Sync {
     /// [`JobQueue`]: self::JobQueue
     /// [`Stream`]: self::Stream
     async fn consumer(&self) -> Self::Consumer;
+
+    /// Close this [`JobQueue`] if it is empty, wait for the queue to be empty otherwise
+    ///
+    /// [`JobQueue`]: Self
+    async fn close(&self) -> Result<(), Self::Err> {
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
