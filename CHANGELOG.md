@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/SonicFrog/net-queue/compare/v0.2.2...v0.3.0) (2022-10-20)
+
+
+### Features
+
+* allow queues to be closed ([7799101](https://github.com/SonicFrog/net-queue/commit/779910125a451f18ec39ccb3dfe7f2157fa6d857))
+
 ## [0.2.2](https://github.com/SonicFrog/net-queue/compare/v0.2.1...v0.2.2) (2022-10-19)
 
 
