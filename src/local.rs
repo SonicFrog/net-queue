@@ -1,4 +1,5 @@
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 
@@ -7,6 +8,8 @@ use futures::prelude::*;
 use pin_project_lite::pin_project;
 
 use postage::dispatch;
+
+use tokio::sync::RwLock;
 
 use tracing::*;
 
@@ -21,7 +24,7 @@ pub struct LocalError;
 #[derive(Clone)]
 pub struct LocalJobQueue {
     in_queue: dispatch::Receiver<Vec<u8>>,
-    out_queue: dispatch::Sender<Vec<u8>>,
+    out_queue: Arc<RwLock<dispatch::Sender<Vec<u8>>>>,
 }
 
 impl Default for LocalJobQueue {
@@ -30,7 +33,7 @@ impl Default for LocalJobQueue {
 
         Self {
             in_queue,
-            out_queue,
+            out_queue: Arc::new(RwLock::new(out_queue)),
         }
     }
 }
@@ -50,6 +53,8 @@ impl JobQueue for LocalJobQueue {
         let data = data.as_ref().to_vec();
 
         self.out_queue
+            .read()
+            .await
             .clone()
             .send(data)
             .await
@@ -74,6 +79,17 @@ impl JobQueue for LocalJobQueue {
 
     async fn consumer(&self) -> Self::Consumer {
         LocalConsumer::new(self.in_queue.clone())
+    }
+
+    async fn close(&self) -> Result<(), Self::Err> {
+        trace!("closing queue");
+
+        self.out_queue
+            .write()
+            .await
+            .close()
+            .await
+            .map_err(|_| LocalError)
     }
 }
 
@@ -146,7 +162,17 @@ impl Stream for LocalConsumer {
 mod test {
     use super::*;
 
-    #[tokio::test]
+    use test_log::test;
+
+    #[test(tokio::test)]
+    async fn create() {
+        let _queue = MakeLocalQueue
+            .make_job_queue("dummy", "file://test".parse().unwrap())
+            .await
+            .expect("failed to open queue");
+    }
+
+    #[test(tokio::test)]
     async fn job_queue() {
         let queue = LocalJobQueue::default();
         let job = Vec::new();
@@ -158,7 +184,7 @@ mod test {
         assert_eq!(&job, &*actual, "wrong job returned");
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn consumer() {
         let queue = LocalJobQueue::default();
         let mut consumer = queue.consumer().await;
@@ -173,5 +199,22 @@ mod test {
             .expect("failed to get job");
 
         assert_eq!(&expected, &*actual);
+    }
+
+    #[test(tokio::test)]
+    async fn close() {
+        let mut consumer = {
+            let queue = LocalJobQueue::default();
+
+            let consumer = queue.consumer().await;
+
+            queue.close().await.expect("failed to close queue");
+
+            consumer
+        };
+
+        let item = consumer.next().await;
+
+        assert!(item.is_none(), "got item from closed queue");
     }
 }
