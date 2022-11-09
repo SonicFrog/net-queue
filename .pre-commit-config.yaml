@@ -25,4 +25,4 @@ repos:
         args: [ '--check' ]
         pass_filenames: false
       - id: clippy
-        args: [ '--', '-D', 'warnings' ]
+        args: [ '--all-features', '--', '-D', 'warnings' ]
