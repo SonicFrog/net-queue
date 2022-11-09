@@ -34,74 +34,62 @@ pub enum RabbitError {
     NoJob,
 }
 
-#[derive(Clone)]
-/// A job queue that uses a rabbit mq server both for all functionnality
-pub struct AmqpJobQueue {
+/// The receiving end of a rabbitmq message queue
+pub struct RabbitInputQueue {
     queue_name: String,
-    channel: lapin::Channel,
-    out_queue: lapin::Consumer,
-}
-
-impl AmqpJobQueue {
-    /// Create a new `JobQueue` backed by the given RabbitMQ connection
-    pub async fn new(queue_name: impl Into<String>, channel: Channel) -> Result<Self> {
-        let queue_name = queue_name.into();
-        let consumer_tag = Uuid::new_v4();
-
-        trace!(queue_name = %queue_name, "declaring new queue");
-
-        channel
-            .queue_declare(
-                &queue_name,
-                QueueDeclareOptions {
-                    durable: true,
-                    ..Default::default()
-                },
-                FieldTable::default(),
-            )
-            .await
-            .context(QueueSnafu {
-                name: queue_name.to_string(),
-            })?;
-
-        trace!(queue_name = %queue_name, "creating consumer");
-
-        let out_queue = channel
-            .basic_consume(
-                &queue_name,
-                consumer_tag.to_string().as_str(),
-                BasicConsumeOptions {
-                    no_ack: false,
-                    ..Default::default()
-                },
-                FieldTable::default(),
-            )
-            .await
-            .context(QueueSnafu {
-                name: queue_name.to_string(),
-            })?;
-
-        trace!(queue_name = % queue_name, "done initializing");
-
-        Ok(Self {
-            out_queue,
-            channel,
-            queue_name,
-        })
-    }
+    queue: lapin::Consumer,
 }
 
 #[async_trait::async_trait]
-impl JobQueue for AmqpJobQueue {
+impl InputQueue for RabbitInputQueue {
     type Err = RabbitError;
 
-    type Handle = AckManager;
+    type Handle = RabbitHandle;
 
-    type Consumer = AmqpConsumer;
+    type Stream = RabbitConsumer;
+
+    /// Get a job through a [`Future`] that will resolve to a [`JobData`] once
+    /// a new job is available or immediately if there are jobs pending
+    ///
+    /// [`Future`]: self::Future
+    /// [`JobData`]: self::JobData
+    async fn get(&self) -> Result<JobResult<Self::Handle>> {
+        trace!(queue_name = % self.queue_name, "attempting get job");
+
+        let delivery = self
+            .queue
+            .clone()
+            .next()
+            .await
+            .context(NoJobSnafu)?
+            .context(ConnectionSnafu)?;
+
+        trace!(tag = delivery.delivery_tag, "new job fetched from rabbitmq");
+
+        Ok(JobResult::new(
+            delivery.data,
+            Self::Handle::new(delivery.acker, delivery.delivery_tag),
+        ))
+    }
+
+    async fn into_stream(self) -> Self::Stream {
+        self.queue.into()
+    }
+}
+
+#[derive(Clone)]
+pub struct RabbitOutputQueue {
+    queue_name: String,
+    channel: Channel,
+}
+
+#[async_trait::async_trait]
+impl OutputQueue for RabbitOutputQueue {
+    type Err = RabbitError;
 
     /// Put a job in the job queue that will be forwarded to a client once there
     /// is a get job request
-    async fn put_job<D>(&self, job: D) -> Result<(), Self::Err>
+    async fn put<D>(&self, job: D) -> Result<(), Self::Err>
     where
         D: AsRef<[u8]> + Send,
     {
@@ -120,34 +108,6 @@ impl JobQueue for AmqpJobQueue {
             .await
             .map(|_| ())
             .context(ConnectionSnafu)
-    }
-
-    /// Get a job through a [`Future`] that will resolve to a [`JobData`] once
-    /// a new job is available or immediately if there are jobs pending
-    ///
-    /// [`Future`]: self::Future
-    /// [`JobData`]: self::JobData
-    async fn get_job(&self) -> Result<JobResult<Self::Handle>> {
-        trace!(queue_name = % self.queue_name, "attempting get job");
-
-        let delivery = self
-            .out_queue
-            .clone()
-            .next()
-            .await
-            .context(NoJobSnafu)?
-            .context(ConnectionSnafu)?;
-
-        trace!(tag = delivery.delivery_tag, "new job fetched from rabbitmq");
-
-        Ok(JobResult::new(
-            delivery.data,
-            Self::Handle::new(delivery.acker, delivery.delivery_tag),
-        ))
-    }
-
-    async fn consumer(&self) -> Self::Consumer {
-        self.out_queue.clone().into()
     }
 
     async fn close(&self) -> Result<(), Self::Err> {
@@ -169,15 +129,10 @@ impl JobQueue for AmqpJobQueue {
 
 /// A factory for rabbit mq job queues
 #[derive(Clone, Default)]
-pub struct MakeRabbitJobQueue;
+pub struct MakeRabbitQueue;
 
-#[async_trait::async_trait]
-impl MakeJobQueue for MakeRabbitJobQueue {
-    type Err = RabbitError;
-
-    type Queue = AmqpJobQueue;
-
-    async fn make_job_queue(&self, name: &str, url: Url) -> Result<Self::Queue, Self::Err> {
+impl MakeRabbitQueue {
+    async fn connect(&self, url: Url) -> Result<lapin::Channel, RabbitError> {
         trace!(url = %url, "connecting to rabbitmq at {}", url);
 
         let connection = Connection::connect(url.as_str(), ConnectionProperties::default())
@@ -188,32 +143,106 @@ impl MakeJobQueue for MakeRabbitJobQueue {
 
         trace!(url = %url, "connection and channel created");
 
-        AmqpJobQueue::new(name, channel).await
+        Ok(channel)
     }
 }
 
-impl Eq for AmqpJobQueue {}
+#[async_trait::async_trait]
+impl MakeQueue for MakeRabbitQueue {
+    type Err = RabbitError;
 
-impl PartialEq for AmqpJobQueue {
+    type InputQueue = RabbitInputQueue;
+
+    type OutputQueue = RabbitOutputQueue;
+
+    async fn input_queue(&self, name: &str, url: Url) -> Result<Self::InputQueue, Self::Err> {
+        let consumer_tag = Uuid::new_v4().to_string();
+        let channel = self.connect(url).await?;
+
+        trace!(
+            queue_name = name,
+            tag = consumer_tag,
+            "opening queue for reading"
+        );
+
+        let queue = channel
+            .basic_consume(
+                name,
+                consumer_tag.as_str(),
+                BasicConsumeOptions {
+                    no_ack: false,
+                    ..Default::default()
+                },
+                FieldTable::default(),
+            )
+            .await
+            .context(QueueSnafu {
+                name: name.to_string(),
+            })?;
+
+        trace!(
+            queue_name = name,
+            tag = consumer_tag,
+            "opened queue for reading"
+        );
+
+        Ok(RabbitInputQueue {
+            queue_name: name.into(),
+            queue,
+        })
+    }
+
+    async fn output_queue(&self, name: &str, url: Url) -> Result<Self::OutputQueue, Self::Err> {
+        trace!(queue_name = name, "declaring new queue for sending");
+
+        let channel = self.connect(url).await?;
+
+        channel
+            .queue_declare(
+                name,
+                QueueDeclareOptions {
+                    durable: true,
+                    ..Default::default()
+                },
+                FieldTable::default(),
+            )
+            .await
+            .context(QueueSnafu {
+                name: name.to_string(),
+            })?;
+
+        trace!(
+            queue_name = name,
+            "successfully declared new queue for sending"
+        );
+
+        Ok(Self::OutputQueue {
+            queue_name: name.into(),
+            channel,
+        })
+    }
+}
+
+impl PartialEq for RabbitOutputQueue {
     fn eq(&self, other: &Self) -> bool {
         self.queue_name == other.queue_name
     }
 }
 
 /// A rabbitmq acknowledgement manager
-pub struct AckManager {
+pub struct RabbitHandle {
     tag: DeliveryTag,
     acker: Acker,
 }
 
-impl AckManager {
+impl RabbitHandle {
     fn new(acker: Acker, tag: DeliveryTag) -> Self {
         Self { acker, tag }
     }
 }
 
 #[async_trait::async_trait]
-impl JobHandle for AckManager {
+impl JobHandle for RabbitHandle {
     type Err = RabbitError;
 
     async fn ack_job(&self) -> Result<()> {
@@ -243,33 +272,27 @@ pin_project_lite::pin_project! {
     ///
     /// [`Consumer`]: crate::Consumer
     /// [`AmqpJobQueue`]: self::AmqpJobQueue
-    pub struct AmqpConsumer {
+    pub struct RabbitConsumer {
         #[pin]
         consumer: lapin::Consumer,
     }
 }
 
-impl Consumer for AmqpConsumer {
-    type Err = RabbitError;
-
-    type Handle = AckManager;
-}
-
-impl From<lapin::Consumer> for AmqpConsumer {
+impl From<lapin::Consumer> for RabbitConsumer {
     fn from(consumer: lapin::Consumer) -> Self {
         Self { consumer }
     }
 }
 
-impl Stream for AmqpConsumer {
-    type Item = Result<JobResult<<Self as Consumer>::Handle>, <Self as Consumer>::Err>;
+impl Stream for RabbitConsumer {
+    type Item = Result<JobResult<RabbitHandle>, RabbitError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.project()
             .consumer
             .poll_next(cx)
             .map_ok(|value| {
-                let handle = AckManager::new(value.acker, value.delivery_tag);
+                let handle = RabbitHandle::new(value.acker, value.delivery_tag);
 
                 JobResult::new(value.data, handle)
             })
@@ -289,28 +312,32 @@ mod test {
         String::from("test-message").into_bytes()
     }
 
-    /// Create a queue with a given name
-    pub async fn create_queue(name: &str) -> impl JobQueue {
+    async fn create_pair(name: &str) -> (impl InputQueue, impl OutputQueue) {
         let addr = option_env!("AMQP_ADDR").unwrap_or("amqp://localhost:5672");
 
-        MakeRabbitJobQueue::default()
-            .clone()
-            .make_job_queue(name, addr.parse().unwrap())
+        let maker = MakeRabbitQueue::default();
+
+        let output = maker
+            .output_queue(name, addr.parse().unwrap())
             .await
-            .expect("failed to create rabbit queue")
+            .expect("could not create output queue");
+
+        let input = maker
+            .input_queue(name, addr.parse().unwrap())
+            .await
+            .expect("could not create input queue");
+
+        (input, output)
     }
 
     #[test(tokio::test)]
     async fn job_queue() {
         let posted = make_job_data();
-        let queue = create_queue("test-job-queu").await;
+        let (input, output) = create_pair("test-job-queu").await;
 
-        queue
-            .put_job(posted.clone())
-            .await
-            .expect("failed to put job");
+        output.put(posted.clone()).await.expect("failed to put job");
 
-        let future = queue.get_job();
+        let future = input.get();
 
         let mut gotten = tokio::time::timeout(Duration::from_secs(1), future)
             .await
@@ -326,17 +353,17 @@ mod test {
     async fn nack_request() {
         static NAME: &str = "nack_job_queue";
 
-        let queue = create_queue(NAME).await;
+        let (input, output) = create_pair(NAME).await;
 
         let posted = make_job_data();
 
-        queue.put_job(&posted).await.expect("failed to put job");
+        output.put(&posted).await.expect("failed to put job");
 
-        let mut handle = queue.get_job().await.expect("failed to get job");
+        let mut handle = input.get().await.expect("failed to get job");
 
         handle.nack_job().await.expect("failed to n-ack job");
 
-        let mut gotten = queue.get_job().await.expect("failed to get job");
+        let mut gotten = input.get().await.expect("failed to get job");
 
         assert_eq!(&posted, &*gotten, "different job after nack");
 
@@ -350,13 +377,13 @@ mod test {
     async fn consumer() {
         static NAME: &str = "consumer_queue";
 
-        let queue = create_queue(NAME).await;
+        let (input, output) = create_pair(NAME).await;
 
         let posted = make_job_data();
 
-        queue.put_job(&posted).await.expect("failed to put job");
+        output.put(&posted).await.expect("failed to put job");
 
-        let consumer = queue.consumer().await;
+        let consumer = input.into_stream().await;
 
         futures::pin_mut!(consumer);
 
@@ -375,12 +402,12 @@ mod test {
     async fn close() {
         static NAME: &str = "closed_queue";
 
-        let queue = create_queue(NAME).await;
-        let consumer = queue.consumer().await;
+        let (input, output) = create_pair(NAME).await;
+        let consumer = input.into_stream().await;
 
         futures::pin_mut!(consumer);
 
-        queue.close().await.expect("failed to close queue");
+        output.close().await.expect("failed to close queue");
 
         let item = consumer.next().await;
 

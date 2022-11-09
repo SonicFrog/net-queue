@@ -17,53 +17,78 @@ mod local;
 #[cfg(feature = "local")]
 pub use local::*;
 
-/// An abstract queue that handles reliable delivery through job acknowledgment and
-/// optionally persistence
+/// The receive-only side of a queue
 #[async_trait::async_trait]
-pub trait JobQueue: Send + Sync {
-    /// The type of error that can occur when getting/putting a job
-    type Err: Debug;
-
-    /// The type of handle returned by this JobQueue
+pub trait InputQueue {
+    /// The type of handle used to ack/nack items received from this queue
     type Handle: JobHandle<Err = Self::Err>;
 
-    /// The type of `Consumer` `Stream` this `JobQueue` produces
-    type Consumer: Consumer<Err = Self::Err>;
+    /// The type of error that can occur while getting an item from this queue
+    type Err: Debug;
 
-    /// Put a job in the queue
-    async fn put_job<D>(&self, job: D) -> Result<(), Self::Err>
+    /// The type of [`Stream`] that this [`InputQueue`] produces
+    ///
+    /// [`Stream`]: futures::Stream
+    /// [`InputQueue`]: Self
+    type Stream: Stream<Item = Result<JobResult<Self::Handle>, Self::Err>> + Unpin;
+
+    /// Receive a message from this [`InputQueue`]
+    ///
+    /// [`InputQueue`]: Self
+    async fn get(&self) -> Result<JobResult<Self::Handle>, Self::Err>;
+
+    /// Convert this [`InputQueue`] into a [`Stream`]
+    ///
+    /// [`InputQueue`]: Self
+    /// [`Stream`]: futures::Stream
+    async fn into_stream(self) -> Self::Stream;
+}
+
+/// The send-only side of a queue
+#[async_trait::async_trait]
+pub trait OutputQueue {
+    /// The type of error that can occur sending messages to this [`OutputQueue`]
+    ///
+    /// [`OutputQueue`]: Self
+    type Err: Debug;
+
+    /// Put a job in this [`OutputQueue`]
+    ///
+    /// [`OutputQueue`]: Self
+    async fn put<D>(&self, data: D) -> Result<(), Self::Err>
     where
         D: AsRef<[u8]> + Send;
 
-    /// Get a job from this queue
-    async fn get_job(&self) -> Result<JobResult<Self::Handle>, Self::Err>;
-
-    /// Get a [`Consumer`] for this [`JobQueue`] to allow [`Stream`] usage
+    /// Close this [`OutputQueue`] signaling we don't want to receive anymore messages
     ///
-    /// [`Consumer`]: self::Consumer
-    /// [`JobQueue`]: self::JobQueue
-    /// [`Stream`]: self::Stream
-    async fn consumer(&self) -> Self::Consumer;
-
-    /// Close this [`JobQueue`] if it is empty, wait for the queue to be empty otherwise
-    ///
-    /// [`JobQueue`]: Self
-    async fn close(&self) -> Result<(), Self::Err> {
-        Ok(())
-    }
+    /// [`OutputQueue`]: Self
+    async fn close(&self) -> Result<(), Self::Err>;
 }
 
 #[async_trait::async_trait]
 /// The queue factory trait that takes care of creating queues
-pub trait MakeJobQueue: Send + Sync {
-    /// The type of job queue returned by this factory
-    type Queue: JobQueue<Err = Self::Err>;
+pub trait MakeQueue: Send + Sync {
+    /// The type of [`InputQueue`] returned by this factory
+    ///
+    /// [`InputQueue`]: self::InputQueue
+    type InputQueue: InputQueue<Err = Self::Err>;
+
+    /// The type of [`OutputQueue`] returned by this factory
+    ///
+    /// [`OutputQueue`]: self::OutputQueue
+    type OutputQueue: OutputQueue<Err = Self::Err>;
 
     /// The type of error that can occur when creating a job queue
     type Err: Error + Send + Sync;
 
     /// Create a new job queue using this factory
-    async fn make_job_queue(&self, name: &str, url: Url) -> Result<Self::Queue, Self::Err>;
+    async fn input_queue(&self, name: &str, url: Url) -> Result<Self::InputQueue, Self::Err>;
+
+    /// Create a new [`OutputQueue`] with this [`MakeQueue`]
+    ///
+    /// [`OutputQueue`]: self::OutputQueue
+    /// [`MakeQueue`]: self::MakeQueue
+    async fn output_queue(&self, name: &str, url: Url) -> Result<Self::OutputQueue, Self::Err>;
 }
 
 /// A trait to manager job timeouts and (n)acks
@@ -78,17 +103,6 @@ pub trait JobHandle: Send + Sync + 'static {
     /// N-ack the job referred by this [`JobHandle`], this must trigger a requeue if the
     /// amount of tries has not exceeded the maximum amount
     async fn nack_job(&self) -> Result<(), Self::Err>;
-}
-
-/// A [`Consumer`] for a [`JobQueue`]
-///
-/// [`Consumer`]: self::Consumer
-/// [`JobQueue`]: self::JobQueue
-pub trait Consumer: Stream<Item = Result<JobResult<Self::Handle>, Self::Err>> {
-    /// Type of error that can occur while fetching jobs
-    type Err: Debug;
-    /// Type of `JobHandle` used to acknowledge jobs in this `Consumer`
-    type Handle: JobHandle<Err = Self::Err>;
 }
 
 /// A struct that holds both the job data and a JobHandle used to acknowledge jobs completion
