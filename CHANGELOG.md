@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.0](https://github.com/SonicFrog/net-queue/compare/v0.3.0...v1.0.0) (2022-11-09)
+## [0.4.0](https://github.com/SonicFrog/net-queue/compare/v0.3.0...v0.4.0) (2022-11-09)
 
 
 ### ⚠ BREAKING CHANGES
