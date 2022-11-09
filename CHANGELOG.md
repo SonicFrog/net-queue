@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0](https://github.com/SonicFrog/net-queue/compare/v0.3.0...v1.0.0) (2022-11-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* change api to splitted input/output
+
+### Features
+
+* change api to splitted input/output ([2f8bfee](https://github.com/SonicFrog/net-queue/commit/2f8bfee31696c9ecafc90a15ff35d06ab58f02ee))
+
 ## [0.3.0](https://github.com/SonicFrog/net-queue/compare/v0.2.2...v0.3.0) (2022-10-20)
 
 
