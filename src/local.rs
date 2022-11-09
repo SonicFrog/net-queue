@@ -1,8 +1,9 @@
-use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
+
+use dashmap::DashMap;
 
 use futures::prelude::*;
 
@@ -12,7 +13,6 @@ use postage::dispatch;
 use postage::prelude::Stream as _;
 
 use tokio::sync::Mutex;
-use tokio::sync::RwLock;
 
 use tracing::*;
 
@@ -39,14 +39,12 @@ impl JobHandle for () {
 /// Local queue maker
 #[derive(Clone, Default)]
 pub struct MakeLocalQueue {
-    queues: Arc<RwLock<HashMap<String, (LocalOutputQueue, LocalInputQueue)>>>,
+    queues: Arc<DashMap<String, (LocalOutputQueue, LocalInputQueue)>>,
 }
 
 impl MakeLocalQueue {
     async fn get_or_insert(&self, name: impl Into<String>) -> (LocalOutputQueue, LocalInputQueue) {
         self.queues
-            .write()
-            .await
             .entry(name.into())
             .or_insert_with(|| {
                 let (tx, rx) = dispatch::channel(64);
