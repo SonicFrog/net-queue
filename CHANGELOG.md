@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/SonicFrog/net-queue/compare/v0.4.0...v0.4.0) (2022-11-19)
+
+
+### Miscellaneous Chores
+
+* **main:** release 0.4.0 ([8d6a175](https://github.com/SonicFrog/net-queue/commit/8d6a175885c54d592976389ef187fe3cd69c2049))
+
 ## [0.4.0](https://github.com/SonicFrog/net-queue/compare/v0.4.0...v0.4.0) (2022-11-09)
 
 
