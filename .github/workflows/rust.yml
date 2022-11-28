@@ -29,7 +29,7 @@ jobs:
           toolchain: stable
           default: true
 
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
 
       - uses: actions-rs/cargo@v1
         name: cargo fmt
@@ -80,7 +80,7 @@ jobs:
           profile: minimal
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
         with:
           key: "coverage"
 
