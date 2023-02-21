@@ -165,6 +165,20 @@ impl MakeQueue for MakeRabbitQueue {
             "opening queue for reading"
         );
 
+        channel
+            .queue_declare(
+                name,
+                QueueDeclareOptions {
+                    durable: true,
+                    ..Default::default()
+                },
+                FieldTable::default(),
+            )
+            .await
+            .context(QueueSnafu {
+                name: name.to_string(),
+            })?;
+
         let queue = channel
             .basic_consume(
                 name,
