@@ -25,7 +25,7 @@ jobs:
         name: git checkout
 
       - name: Dependency Review
-        uses: actions/dependency-review-action@v3.0.3
+        uses: actions/dependency-review-action@v3.0.4
         with:
           fail-on-severity: moderate
           fail-on-scopes: runtime
